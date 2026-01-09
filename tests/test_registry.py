@@ -125,3 +125,53 @@ def test_registry_list_sessions_includes_database_providers() -> None:
     assert len(sessions) == 2
     assert sorted(s.session_id for s in sessions) == ["db-session-1", "db-session-2"]
     assert all(s.provider == "sqlite_mock" for s in sessions)
+
+
+def test_registry_empty_watch_patterns_no_list_sessions() -> None:
+    """Provider with empty watch_patterns and no list_sessions yields nothing, doesn't crash."""
+
+    class _EmptyProvider(SessionProvider):
+        @property
+        def name(self) -> str:
+            return "empty"
+
+        @property
+        def watch_patterns(self) -> list[str]:
+            return []
+
+        def parse_session_file(self, path: Path) -> SessionInfo | None:
+            return None
+
+        def count_turns(self, path: Path) -> int:
+            return 0
+
+    reg = SessionRegistry(providers=[_EmptyProvider()])
+    sessions = list(reg.list_sessions())
+    assert sessions == []
+
+
+def test_registry_list_sessions_handles_database_provider_errors() -> None:
+    """Database provider exceptions are caught like file parsing errors."""
+
+    class _BrokenDBProvider(SessionProvider):
+        @property
+        def name(self) -> str:
+            return "broken_db"
+
+        @property
+        def watch_patterns(self) -> list[str]:
+            return []
+
+        def list_sessions(self):
+            raise RuntimeError("Database connection failed")
+
+        def parse_session_file(self, path: Path) -> SessionInfo | None:
+            return None
+
+        def count_turns(self, path: Path) -> int:
+            return 0
+
+    reg = SessionRegistry(providers=[_BrokenDBProvider()])
+    # Should not raise, should return empty
+    sessions = list(reg.list_sessions())
+    assert sessions == []

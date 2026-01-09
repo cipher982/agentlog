@@ -118,8 +118,13 @@ class SessionRegistry:
         """
         # If provider has no watch_patterns, check if it has a custom list_sessions()
         if not provider.watch_patterns:
-            if hasattr(provider, 'list_sessions') and callable(getattr(provider, 'list_sessions')):
-                yield from provider.list_sessions()
+            list_sessions = getattr(provider, 'list_sessions', None)
+            if callable(list_sessions):
+                try:
+                    yield from list_sessions()
+                except Exception:
+                    # Match file parsing behavior: skip on errors
+                    pass
             return
 
         for pattern in provider.watch_patterns:

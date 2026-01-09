@@ -2,16 +2,14 @@
 
 Codex stores sessions in ~/.codex/sessions/YYYY/MM/DD/*.jsonl where:
 - Each file is JSONL (JSON Lines) format.
-- First line is a metadata object with keys like: {"id":"uuid","timestamp":"ISO8601",...}
-- Conversation events are {"type":"message","role":"user|assistant",...}
-- Tool calls use {"type":"function_call",...} and {"type":"function_call_output",...}
-- Many {"record_type":"state"} lines can appear and should be ignored.
+- First line: {"type":"session_meta","payload":{"id":"uuid","cwd":"/path",...}}
+- Subsequent lines: {"type":"response_item","payload":{"type":"message","role":"user|assistant",...}}
 
 Turn counting rules:
-- Count: type="message" with role in ("user", "assistant")
-- Skip: metadata header (no type)
-- Skip: record_type="state" (metadata)
-- Skip: tool calls (type="function_call" and "function_call_output")
+- Count: type="response_item" with payload.type="message" and payload.role in ("user", "assistant")
+- Skip: type="session_meta" (metadata, not conversation)
+- Skip: type="response_item" with payload.type in ("function_call", "function_call_output", "reasoning")
+- Skip: type="turn_context", "event_msg" (metadata events)
 """
 
 from __future__ import annotations
@@ -29,15 +27,26 @@ def _is_turn_event(obj: dict) -> bool:
     """Check if a JSONL event counts as a conversational turn.
 
     Codex events that count as turns:
-    - type="message" and role in ("user", "assistant")
+    - type="response_item" with payload.type="message" and payload.role in ("user", "assistant")
     """
     if not isinstance(obj, dict):
         return False
 
-    if obj.get("type") != "message":
+    # Must be a response_item
+    if obj.get("type") != "response_item":
         return False
 
-    return obj.get("role") in ("user", "assistant")
+    payload = obj.get("payload")
+    if not isinstance(payload, dict):
+        return False
+
+    # Must be a message type
+    if payload.get("type") != "message":
+        return False
+
+    # Must have user or assistant role
+    role = payload.get("role")
+    return role in ("user", "assistant")
 
 
 @dataclass
@@ -89,8 +98,10 @@ class CodexProvider(SessionProvider):
         if not isinstance(session_id, str) or not session_id:
             return None
 
-        # Codex sessions don't reliably include cwd; keep blank.
-        cwd = ""
+        # Codex stores cwd in session_meta payload
+        cwd = meta.get("cwd", "")
+        if not isinstance(cwd, str):
+            cwd = ""
 
         # Get turn count
         turn_count = self.count_turns(path)
@@ -102,10 +113,13 @@ class CodexProvider(SessionProvider):
         except OSError:
             pass
 
-        project = self._derive_project_from_git(meta.get("git"))
+        # Derive project from cwd or git info
+        project = self.derive_project_from_cwd(cwd) if cwd else None
+        git_info = meta.get("git")
+        if not project and isinstance(git_info, dict):
+            project = self._derive_project_from_git(git_info)
 
         extra: dict[str, object] = {}
-        git_info = meta.get("git")
         if isinstance(git_info, dict):
             repo = git_info.get("repository_url")
             if isinstance(repo, str) and repo:
@@ -116,6 +130,10 @@ class CodexProvider(SessionProvider):
             commit = git_info.get("commit_hash")
             if isinstance(commit, str) and commit:
                 extra["git_commit"] = commit
+
+        cli_version = meta.get("cli_version")
+        if isinstance(cli_version, str) and cli_version:
+            extra["cli_version"] = cli_version
 
         return SessionInfo(
             session_id=session_id,
@@ -145,13 +163,49 @@ class CodexProvider(SessionProvider):
     def find_session_for_cwd(self, cwd: str) -> SessionInfo | None:
         """Find the most recent session for a given working directory.
 
-        Codex session logs in ~/.codex/sessions do not reliably include cwd.
-        This method is currently unsupported and returns None.
+        Searches through session files to find one matching the given cwd.
         """
-        return None
+        if not cwd:
+            return None
+
+        sessions_dir = self._home / ".codex" / "sessions"
+        if not sessions_dir.exists():
+            return None
+
+        # Search through all session files (most recent first by path structure)
+        candidates: list[tuple[Path, int]] = []
+
+        try:
+            # Walk through year/month/day directories
+            for year_dir in sorted(sessions_dir.iterdir(), reverse=True):
+                if not year_dir.is_dir() or not year_dir.name.isdigit():
+                    continue
+                for month_dir in sorted(year_dir.iterdir(), reverse=True):
+                    if not month_dir.is_dir() or not month_dir.name.isdigit():
+                        continue
+                    for day_dir in sorted(month_dir.iterdir(), reverse=True):
+                        if not day_dir.is_dir() or not day_dir.name.isdigit():
+                            continue
+                        for session_file in day_dir.glob("*.jsonl"):
+                            meta = self._read_session_meta(session_file)
+                            if meta and meta.get("cwd") == cwd:
+                                try:
+                                    mtime_ns = session_file.stat().st_mtime_ns
+                                    candidates.append((session_file, mtime_ns))
+                                except OSError:
+                                    continue
+        except OSError:
+            return None
+
+        if not candidates:
+            return None
+
+        # Return the most recently modified session
+        latest_path = max(candidates, key=lambda x: x[1])[0]
+        return self.parse_session_file(latest_path)
 
     def _read_session_meta(self, path: Path, max_lines: int = 5) -> dict | None:
-        """Extract the metadata header from the beginning of a JSONL file."""
+        """Extract session_meta payload from the beginning of a JSONL file."""
         try:
             with path.open("r", encoding="utf-8") as f:
                 for i, line in enumerate(f):
@@ -164,16 +218,16 @@ class CodexProvider(SessionProvider):
                         obj = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    # Metadata line has the session id/timestamp and typically no "type".
-                    if isinstance(obj, dict) and "id" in obj and "timestamp" in obj and "type" not in obj:
-                        return obj
+                    # Codex format: {"type":"session_meta","payload":{...}}
+                    if isinstance(obj, dict) and obj.get("type") == "session_meta":
+                        payload = obj.get("payload")
+                        if isinstance(payload, dict):
+                            return payload
         except OSError:
             pass
         return None
 
-    def _derive_project_from_git(self, git: object) -> str | None:
-        if not isinstance(git, dict):
-            return None
+    def _derive_project_from_git(self, git: dict) -> str | None:
         repo = git.get("repository_url")
         if not isinstance(repo, str) or not repo:
             return None

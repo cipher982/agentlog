@@ -65,7 +65,17 @@ class EventParser:
         if self.provider == 'claude':
             return self._parse_claude_event(raw_json)
         elif self.provider == 'codex':
-            return self._parse_codex_event(raw_json)
+            event = self._parse_codex_event(raw_json)
+            if event is None:
+                # Return a minimal event for unsupported types
+                return AgentEvent(
+                    timestamp=datetime.now(),
+                    role="system",
+                    event_type=raw_json.get("type"),
+                    content_text=None,
+                    raw_json=dict(raw_json),
+                )
+            return event
         elif self.provider == 'gemini':
             return self._parse_gemini_event(raw_json)
         else:
@@ -153,13 +163,16 @@ class EventParser:
         New format (Codex CLI):
         - {"type":"session_meta","payload":{"id":"...","cwd":"/path",...}}
         - {"type":"response_item","payload":{"type":"message","role":"user|assistant","content":[...]}}  (yielded)
+        - {"type":"response_item","payload":{"type":"function_call","name":"...","arguments":"...","call_id":"..."}}  (yielded)
+        - {"type":"response_item","payload":{"type":"function_call_output","call_id":"...","output":"..."}}  (yielded)
         - other event types (ignored)
 
         Legacy format (older exports):
         - Metadata header (no "type") with keys like: id, timestamp, git
         - {"record_type":"state"} (ignored)
         - {"type":"message","role":"user|assistant","content":[{"type":"input_text|output_text","text":"..."}]} (yielded)
-        - {"type":"function_call",...} / {"type":"function_call_output",...} (ignored)
+        - {"type":"function_call","name":"...","arguments":"..."} (yielded)
+        - {"type":"function_call_output","call_id":"...","output":"..."} (yielded)
         """
         session_id: str | None = None
         cwd: str | None = None
@@ -225,12 +238,13 @@ class EventParser:
                         _capture_git_from_mapping(git)
                     continue
 
-                # Only yield message events (legacy "message" or new "response_item" message payload).
+                # Parse the event (message, function_call, or function_call_output)
                 event = self._parse_codex_event(raw)
                 if event is None:
                     continue
 
-                if session_id and event.session_id is None:
+                # Enrich event with session context
+                if session_id or cwd or git_repo or git_branch or git_commit:
                     event = AgentEvent(
                         timestamp=event.timestamp,
                         role=event.role,
@@ -240,7 +254,7 @@ class EventParser:
                         tool_name=event.tool_name,
                         tool_input_json=event.tool_input_json,
                         tool_output_text=event.tool_output_text,
-                        session_id=session_id,
+                        session_id=event.session_id or session_id,
                         cwd=event.cwd or cwd,
                         git_repo=event.git_repo or git_repo,
                         git_branch=event.git_branch or git_branch,
@@ -249,30 +263,59 @@ class EventParser:
                 yield event
     
     def _parse_codex_event(self, raw: Mapping[str, Any]) -> AgentEvent | None:
-        """Parse a single Codex event (message-like).
+        """Parse a single Codex event (message, function_call, or function_call_output).
 
         Supports both:
         - legacy: {"type":"message","role":...,"content":[...]}
+        - legacy: {"type":"function_call","name":"...","arguments":"..."}
+        - legacy: {"type":"function_call_output","call_id":"...","output":"..."}
         - current: {"type":"response_item","payload":{"type":"message","role":...,"content":[...]}}
+        - current: {"type":"response_item","payload":{"type":"function_call","name":"...","arguments":"...","call_id":"..."}}
+        - current: {"type":"response_item","payload":{"type":"function_call_output","call_id":"...","output":"..."}}
         """
         raw_type = raw.get("type")
-        obj: Mapping[str, Any]
-        event_type: str | None = None
+        
+        # Extract timestamp (used by all event types)
+        timestamp = datetime.now()
+        ts_str = raw.get("timestamp")
+        if isinstance(ts_str, str) and ts_str:
+            try:
+                timestamp = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            except ValueError:
+                pass
 
-        if raw_type == "message":
-            obj = raw
-            event_type = "message"
-        elif raw_type == "response_item":
+        # Handle response_item wrapper (current format)
+        if raw_type == "response_item":
             payload = raw.get("payload")
-            if not isinstance(payload, dict) or payload.get("type") != "message":
+            if not isinstance(payload, dict):
                 return None
-            obj = payload
-            event_type = "message"
-        else:
-            return None
-
+            payload_type = payload.get("type")
+            
+            if payload_type == "message":
+                return self._parse_codex_message(payload, raw, timestamp)
+            elif payload_type == "function_call":
+                return self._parse_codex_function_call(payload, raw, timestamp)
+            elif payload_type == "function_call_output":
+                return self._parse_codex_function_call_output(payload, raw, timestamp)
+            else:
+                return None
+        
+        # Handle legacy format (type at top level)
+        elif raw_type == "message":
+            return self._parse_codex_message(raw, raw, timestamp)
+        elif raw_type == "function_call":
+            return self._parse_codex_function_call(raw, raw, timestamp)
+        elif raw_type == "function_call_output":
+            return self._parse_codex_function_call_output(raw, raw, timestamp)
+        
+        return None
+    
+    def _parse_codex_message(
+        self, obj: Mapping[str, Any], raw: Mapping[str, Any], timestamp: datetime
+    ) -> AgentEvent:
+        """Parse a Codex message event."""
         role = obj.get("role", "user")
-
+        
         content_text = None
         content = obj.get("content")
         if isinstance(content, str):
@@ -287,21 +330,72 @@ class EventParser:
                     parts.append(text)
             content_text = "\n".join(parts) if parts else None
         
-        # Codex may have timestamps
-        timestamp = datetime.now()
-        ts_str = raw.get("timestamp")
-        if isinstance(ts_str, str) and ts_str:
-            try:
-                timestamp = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-            except ValueError:
-                pass
-        
         return AgentEvent(
             timestamp=timestamp,
             role=role if role in ("user", "assistant", "system") else "user",
-            event_type=event_type,
+            event_type="message",
             content_text=content_text,
             raw_json=dict(raw),
+        )
+    
+    def _parse_codex_function_call(
+        self, obj: Mapping[str, Any], raw: Mapping[str, Any], timestamp: datetime
+    ) -> AgentEvent:
+        """Parse a Codex function_call event."""
+        tool_name = obj.get("name")
+        
+        # Arguments may be JSON string or dict
+        args = obj.get("arguments")
+        tool_input_json: Any = None
+        if isinstance(args, str):
+            try:
+                tool_input_json = json.loads(args)
+            except json.JSONDecodeError:
+                tool_input_json = args
+        elif args is not None:
+            tool_input_json = args
+        
+        return AgentEvent(
+            timestamp=timestamp,
+            role="assistant",
+            event_type="tool_call",
+            content_text=None,
+            raw_json=dict(raw),
+            tool_name=tool_name,
+            tool_input_json=tool_input_json,
+        )
+    
+    def _parse_codex_function_call_output(
+        self, obj: Mapping[str, Any], raw: Mapping[str, Any], timestamp: datetime
+    ) -> AgentEvent:
+        """Parse a Codex function_call_output event."""
+        output = obj.get("output")
+        tool_output_text: str | None = None
+        
+        if isinstance(output, str):
+            # Output may be JSON-encoded with nested "output" field
+            try:
+                parsed = json.loads(output)
+                if isinstance(parsed, dict) and "output" in parsed:
+                    tool_output_text = parsed.get("output")
+                else:
+                    tool_output_text = output
+            except json.JSONDecodeError:
+                tool_output_text = output
+        elif output is not None:
+            tool_output_text = json.dumps(output, ensure_ascii=False)
+        
+        # call_id can be used to link back to the function_call
+        call_id = obj.get("call_id")
+        
+        return AgentEvent(
+            timestamp=timestamp,
+            role="tool",
+            event_type="tool_output",
+            content_text=None,
+            raw_json=dict(raw),
+            tool_name=call_id,  # Store call_id in tool_name for linking
+            tool_output_text=tool_output_text,
         )
     
     def _parse_gemini_json(self, path: Path) -> Iterator[AgentEvent]:

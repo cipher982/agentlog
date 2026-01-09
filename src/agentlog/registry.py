@@ -110,7 +110,18 @@ class SessionRegistry:
             yield from self._list_provider_sessions(prov)
     
     def _list_provider_sessions(self, provider: SessionProvider) -> Iterator[SessionInfo]:
-        """List sessions for a specific provider."""
+        """List sessions for a specific provider.
+
+        For providers with watch_patterns, globs files and parses each.
+        For providers without watch_patterns (e.g., Cursor/SQLite), delegates
+        to the provider's list_sessions() method if available.
+        """
+        # If provider has no watch_patterns, check if it has a custom list_sessions()
+        if not provider.watch_patterns:
+            if hasattr(provider, 'list_sessions') and callable(getattr(provider, 'list_sessions')):
+                yield from provider.list_sessions()
+            return
+
         for pattern in provider.watch_patterns:
             # Expand ~ and relative paths to absolute
             if pattern.startswith('~'):

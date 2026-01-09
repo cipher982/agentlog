@@ -76,3 +76,52 @@ def test_registry_list_sessions_globs_and_skips_parse_errors(tmp_path: Path) -> 
     reg = SessionRegistry(providers=[_GlobProvider()])
     sessions = list(reg.list_sessions())
     assert sorted(s.session_id for s in sessions) == ["good-1", "good-2"]
+
+
+def test_registry_list_sessions_includes_database_providers() -> None:
+    """Test that providers without watch_patterns (like Cursor) are included via list_sessions()."""
+
+    class _SQLiteProvider(SessionProvider):
+        """Mock provider that uses a database (no watch_patterns) like Cursor."""
+
+        @property
+        def name(self) -> str:
+            return "sqlite_mock"
+
+        @property
+        def watch_patterns(self) -> list[str]:
+            # No file patterns - we're database-backed
+            return []
+
+        def list_sessions(self):
+            """Yield sessions from our mock 'database'."""
+            yield SessionInfo(
+                session_id="db-session-1",
+                provider=self.name,
+                cwd="",
+                file_path=Path("/fake/db.sqlite"),
+                turn_count=5,
+                project=None,
+                last_activity=datetime(2025, 1, 15, tzinfo=timezone.utc),
+            )
+            yield SessionInfo(
+                session_id="db-session-2",
+                provider=self.name,
+                cwd="",
+                file_path=Path("/fake/db.sqlite"),
+                turn_count=3,
+                project=None,
+                last_activity=datetime(2025, 1, 14, tzinfo=timezone.utc),
+            )
+
+        def parse_session_file(self, path: Path) -> SessionInfo | None:
+            return None
+
+        def count_turns(self, path: Path) -> int:
+            return 0
+
+    reg = SessionRegistry(providers=[_SQLiteProvider()])
+    sessions = list(reg.list_sessions())
+    assert len(sessions) == 2
+    assert sorted(s.session_id for s in sessions) == ["db-session-1", "db-session-2"]
+    assert all(s.provider == "sqlite_mock" for s in sessions)

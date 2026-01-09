@@ -150,12 +150,34 @@ class EventParser:
         """Parse Codex JSONL format.
 
         Expected line types:
+        New format (Codex CLI):
+        - {"type":"session_meta","payload":{"id":"...","cwd":"/path",...}}
+        - {"type":"response_item","payload":{"type":"message","role":"user|assistant","content":[...]}}  (yielded)
+        - other event types (ignored)
+
+        Legacy format (older exports):
         - Metadata header (no "type") with keys like: id, timestamp, git
         - {"record_type":"state"} (ignored)
-        - {"type":"message","role":"user|assistant","content":[{"type":"input_text|output_text","text":"..."}]}
+        - {"type":"message","role":"user|assistant","content":[{"type":"input_text|output_text","text":"..."}]} (yielded)
         - {"type":"function_call",...} / {"type":"function_call_output",...} (ignored)
         """
         session_id: str | None = None
+        cwd: str | None = None
+        git_repo: str | None = None
+        git_branch: str | None = None
+        git_commit: str | None = None
+
+        def _capture_git_from_mapping(m: Mapping[str, Any]) -> None:
+            nonlocal git_repo, git_branch, git_commit
+            repo = m.get("repository_url")
+            if isinstance(repo, str) and repo:
+                git_repo = repo
+            branch = m.get("branch")
+            if isinstance(branch, str) and branch:
+                git_branch = branch
+            commit = m.get("commit_hash")
+            if isinstance(commit, str) and commit:
+                git_commit = commit
 
         with path.open("r", encoding="utf-8") as f:
             for line in f:
@@ -169,17 +191,45 @@ class EventParser:
                 if not isinstance(raw, dict):
                     continue
 
+                # New format: session metadata.
+                if raw.get("type") == "session_meta":
+                    payload = raw.get("payload")
+                    if isinstance(payload, dict):
+                        sid = payload.get("id")
+                        if isinstance(sid, str) and sid:
+                            session_id = sid
+                        session_cwd = payload.get("cwd")
+                        if isinstance(session_cwd, str) and session_cwd:
+                            cwd = session_cwd
+                        git = payload.get("git")
+                        if isinstance(git, dict):
+                            _capture_git_from_mapping(git)
+                    continue
+
+                # New format: turn context can include cwd.
+                if raw.get("type") == "turn_context":
+                    payload = raw.get("payload")
+                    if isinstance(payload, dict):
+                        context_cwd = payload.get("cwd")
+                        if isinstance(context_cwd, str) and context_cwd:
+                            cwd = context_cwd
+                    continue
+
                 # Metadata header (first line): {"id": "...", "timestamp": "...", ...} with no "type"
                 if "type" not in raw and "id" in raw and "timestamp" in raw:
                     sid = raw.get("id")
                     if isinstance(sid, str) and sid:
                         session_id = sid
+                    git = raw.get("git")
+                    if isinstance(git, dict):
+                        _capture_git_from_mapping(git)
                     continue
 
-                # Only yield message events
-                if raw.get("type") != "message":
-                    continue
+                # Only yield message events (legacy "message" or new "response_item" message payload).
                 event = self._parse_codex_event(raw)
+                if event is None:
+                    continue
+
                 if session_id and event.session_id is None:
                     event = AgentEvent(
                         timestamp=event.timestamp,
@@ -191,19 +241,40 @@ class EventParser:
                         tool_input_json=event.tool_input_json,
                         tool_output_text=event.tool_output_text,
                         session_id=session_id,
-                        cwd=event.cwd,
-                        git_repo=event.git_repo,
-                        git_branch=event.git_branch,
-                        git_commit=event.git_commit,
+                        cwd=event.cwd or cwd,
+                        git_repo=event.git_repo or git_repo,
+                        git_branch=event.git_branch or git_branch,
+                        git_commit=event.git_commit or git_commit,
                     )
                 yield event
     
-    def _parse_codex_event(self, raw: Mapping[str, Any]) -> AgentEvent:
-        """Parse a single Codex event."""
-        role = raw.get("role", "user")
+    def _parse_codex_event(self, raw: Mapping[str, Any]) -> AgentEvent | None:
+        """Parse a single Codex event (message-like).
+
+        Supports both:
+        - legacy: {"type":"message","role":...,"content":[...]}
+        - current: {"type":"response_item","payload":{"type":"message","role":...,"content":[...]}}
+        """
+        raw_type = raw.get("type")
+        obj: Mapping[str, Any]
+        event_type: str | None = None
+
+        if raw_type == "message":
+            obj = raw
+            event_type = "message"
+        elif raw_type == "response_item":
+            payload = raw.get("payload")
+            if not isinstance(payload, dict) or payload.get("type") != "message":
+                return None
+            obj = payload
+            event_type = "message"
+        else:
+            return None
+
+        role = obj.get("role", "user")
 
         content_text = None
-        content = raw.get("content")
+        content = obj.get("content")
         if isinstance(content, str):
             content_text = content
         elif isinstance(content, list):
@@ -228,7 +299,7 @@ class EventParser:
         return AgentEvent(
             timestamp=timestamp,
             role=role if role in ("user", "assistant", "system") else "user",
-            event_type=raw.get("type") if isinstance(raw.get("type"), str) else None,
+            event_type=event_type,
             content_text=content_text,
             raw_json=dict(raw),
         )

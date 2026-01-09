@@ -30,7 +30,7 @@ class AgentEvent:
     content_text: str | None
     raw_json: dict[str, Any]
     tool_name: str | None = None
-    tool_input_json: dict | str | None = None
+    tool_input_json: Any | None = None
     tool_output_text: str | None = None
     session_id: str | None = None
     cwd: str | None = None

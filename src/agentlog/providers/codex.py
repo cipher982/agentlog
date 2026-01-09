@@ -1,15 +1,17 @@
 """Codex CLI session provider.
 
 Codex stores sessions in ~/.codex/sessions/YYYY/MM/DD/*.jsonl where:
-- Each file is a JSONL (JSON Lines) format
-- First line: {"type":"session_meta","payload":{"id":"uuid","cwd":"/path",...}}
-- Subsequent lines: {"type":"response_item","payload":{"type":"message","role":"user|assistant",...}}
+- Each file is JSONL (JSON Lines) format.
+- First line is a metadata object with keys like: {"id":"uuid","timestamp":"ISO8601",...}
+- Conversation events are {"type":"message","role":"user|assistant",...}
+- Tool calls use {"type":"function_call",...} and {"type":"function_call_output",...}
+- Many {"record_type":"state"} lines can appear and should be ignored.
 
 Turn counting rules:
-- Count: type="response_item" with payload.type="message" and payload.role="user" or "assistant"
-- Skip: type="session_meta" (metadata, not conversation)
-- Skip: type="response_item" with payload.type="function_call" or "function_call_output" (tool calls)
-- Skip: type="turn_context", "event_msg", "reasoning" (metadata events)
+- Count: type="message" with role in ("user", "assistant")
+- Skip: metadata header (no type)
+- Skip: record_type="state" (metadata)
+- Skip: tool calls (type="function_call" and "function_call_output")
 """
 
 from __future__ import annotations
@@ -27,32 +29,15 @@ def _is_turn_event(obj: dict) -> bool:
     """Check if a JSONL event counts as a conversational turn.
 
     Codex events that count as turns:
-    - type="response_item" with payload.type="message" and payload.role in ("user", "assistant")
-
-    Events that are skipped:
-    - session_meta (session metadata)
-    - turn_context (turn configuration)
-    - event_msg (token counts, etc.)
-    - response_item with payload.type in ("function_call", "function_call_output", "reasoning")
+    - type="message" and role in ("user", "assistant")
     """
     if not isinstance(obj, dict):
         return False
 
-    # Must be a response_item
-    if obj.get("type") != "response_item":
+    if obj.get("type") != "message":
         return False
 
-    payload = obj.get("payload")
-    if not isinstance(payload, dict):
-        return False
-
-    # Must be a message type
-    if payload.get("type") != "message":
-        return False
-
-    # Must have user or assistant role
-    role = payload.get("role")
-    return role in ("user", "assistant")
+    return obj.get("role") in ("user", "assistant")
 
 
 @dataclass
@@ -96,41 +81,41 @@ class CodexProvider(SessionProvider):
         if not path.exists():
             return None
 
-        # Extract session ID and cwd from session_meta
         meta = self._read_session_meta(path)
         if not meta:
             return None
 
         session_id = meta.get("id")
-        if not session_id:
+        if not isinstance(session_id, str) or not session_id:
             return None
 
-        cwd = meta.get("cwd", "")
+        # Codex sessions don't reliably include cwd; keep blank.
+        cwd = ""
 
         # Get turn count
         turn_count = self.count_turns(path)
 
-        # Get last modified time as last activity
+        # Use file mtime as last activity (timestamp in meta is start time).
+        last_activity = None
         try:
-            mtime = path.stat().st_mtime
-            last_activity = datetime.fromtimestamp(mtime)
+            last_activity = datetime.fromtimestamp(path.stat().st_mtime)
         except OSError:
-            last_activity = None
+            pass
 
-        # Extract project from cwd
-        project = self.derive_project_from_cwd(cwd)
+        project = self._derive_project_from_git(meta.get("git"))
 
-        # Extract extra metadata
-        extra = {}
+        extra: dict[str, object] = {}
         git_info = meta.get("git")
         if isinstance(git_info, dict):
+            repo = git_info.get("repository_url")
+            if isinstance(repo, str) and repo:
+                extra["git_repo"] = repo
             branch = git_info.get("branch")
-            if branch:
+            if isinstance(branch, str) and branch:
                 extra["git_branch"] = branch
-
-        cli_version = meta.get("cli_version")
-        if cli_version:
-            extra["cli_version"] = cli_version
+            commit = git_info.get("commit_hash")
+            if isinstance(commit, str) and commit:
+                extra["git_commit"] = commit
 
         return SessionInfo(
             session_id=session_id,
@@ -157,61 +142,16 @@ class CodexProvider(SessionProvider):
             self._turn_cache[path] = state
             return state.turn_count
 
-    def derive_cwd_from_path(self, path: Path) -> str | None:
-        """Codex doesn't encode cwd in the file path.
-
-        Unlike Claude which uses a slug-encoded directory name, Codex stores
-        sessions by date (YYYY/MM/DD) and the cwd is in the session_meta.
-        """
-        return None
-
     def find_session_for_cwd(self, cwd: str) -> SessionInfo | None:
         """Find the most recent session for a given working directory.
 
-        Since Codex doesn't encode cwd in the path, we need to search through
-        session files and parse their session_meta to find matching cwd.
+        Codex session logs in ~/.codex/sessions do not reliably include cwd.
+        This method is currently unsupported and returns None.
         """
-        if not cwd:
-            return None
-
-        sessions_dir = self._home / ".codex" / "sessions"
-        if not sessions_dir.exists():
-            return None
-
-        # Search through all session files (most recent first by path structure)
-        candidates: list[tuple[Path, int]] = []
-
-        try:
-            # Walk through year/month/day directories
-            for year_dir in sorted(sessions_dir.iterdir(), reverse=True):
-                if not year_dir.is_dir() or not year_dir.name.isdigit():
-                    continue
-                for month_dir in sorted(year_dir.iterdir(), reverse=True):
-                    if not month_dir.is_dir() or not month_dir.name.isdigit():
-                        continue
-                    for day_dir in sorted(month_dir.iterdir(), reverse=True):
-                        if not day_dir.is_dir() or not day_dir.name.isdigit():
-                            continue
-                        for session_file in day_dir.glob("*.jsonl"):
-                            meta = self._read_session_meta(session_file)
-                            if meta and meta.get("cwd") == cwd:
-                                try:
-                                    mtime_ns = session_file.stat().st_mtime_ns
-                                    candidates.append((session_file, mtime_ns))
-                                except OSError:
-                                    continue
-        except OSError:
-            return None
-
-        if not candidates:
-            return None
-
-        # Return the most recently modified session
-        latest_path = max(candidates, key=lambda x: x[1])[0]
-        return self.parse_session_file(latest_path)
+        return None
 
     def _read_session_meta(self, path: Path, max_lines: int = 5) -> dict | None:
-        """Extract session_meta from the beginning of a JSONL file."""
+        """Extract the metadata header from the beginning of a JSONL file."""
         try:
             with path.open("r", encoding="utf-8") as f:
                 for i, line in enumerate(f):
@@ -224,13 +164,28 @@ class CodexProvider(SessionProvider):
                         obj = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    if obj.get("type") == "session_meta":
-                        payload = obj.get("payload")
-                        if isinstance(payload, dict):
-                            return payload
+                    # Metadata line has the session id/timestamp and typically no "type".
+                    if isinstance(obj, dict) and "id" in obj and "timestamp" in obj and "type" not in obj:
+                        return obj
         except OSError:
             pass
         return None
+
+    def _derive_project_from_git(self, git: object) -> str | None:
+        if not isinstance(git, dict):
+            return None
+        repo = git.get("repository_url")
+        if not isinstance(repo, str) or not repo:
+            return None
+
+        # Handle common repo URL forms:
+        # - git@github.com:org/name.git
+        # - https://github.com/org/name(.git)
+        tail = repo.rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+        if tail.endswith(".git"):
+            tail = tail[:-4]
+        tail = tail.strip()
+        return tail or None
 
     def _count_turns_full(self, path: Path) -> TurnCountState:
         """Full turn count by streaming the entire file."""

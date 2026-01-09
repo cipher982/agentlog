@@ -1,5 +1,7 @@
 """Base class for session providers."""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -69,13 +71,31 @@ class SessionProvider(ABC):
         """
         return None
     
-    def find_session_for_cwd(self, cwd: str) -> Path | None:
-        """Find the most recent session file for a given working directory.
-        
+    def find_session_for_cwd(self, cwd: str) -> SessionInfo | None:
+        """Find the most recent session for a given working directory.
+
         Args:
             cwd: Working directory to find session for
             
         Returns:
-            Path to the session file, or None if not found
+            SessionInfo for the most recent session, or None if not found
         """
         return None
+
+    def derive_project_from_cwd(self, cwd: str) -> str | None:
+        """Derive a human-friendly project name from a working directory.
+
+        By default, this returns the last path component of the cwd.
+        Providers can override this if they have richer metadata.
+        """
+        cwd = (cwd or "").strip()
+        if not cwd:
+            return None
+
+        try:
+            resolved = Path(cwd).resolve()
+        except OSError:
+            resolved = Path(cwd)
+
+        name = resolved.name.strip()
+        return name or None

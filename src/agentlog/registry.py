@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -164,20 +165,22 @@ class SessionRegistry:
         else:
             providers_to_check = self._providers.values()
         
-        sessions = []
+        sessions: list[SessionInfo] = []
         for prov in providers_to_check:
-            path = prov.find_session_for_cwd(cwd)
-            if path is not None:
-                session = prov.parse_session_file(path)
-                if session is not None:
-                    sessions.append(session)
+            session = prov.find_session_for_cwd(cwd)
+            if session is not None:
+                sessions.append(session)
         
         if not sessions:
             return None
         
         # Return the most recently active session
-        return max(sessions, key=lambda s: s.last_activity or datetime.fromtimestamp(s.file_path.stat().st_mtime))
+        def _activity_key(s: SessionInfo) -> datetime:
+            if s.last_activity is not None:
+                return s.last_activity
+            try:
+                return datetime.fromtimestamp(s.file_path.stat().st_mtime)
+            except OSError:
+                return datetime.fromtimestamp(0)
 
-
-# Import datetime for the max comparison
-from datetime import datetime
+        return max(sessions, key=_activity_key)

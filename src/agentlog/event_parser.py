@@ -20,6 +20,7 @@ class EventParser:
     - Claude: JSONL events
     - Codex: JSONL events (metadata header + messages + tool calls)
     - Gemini: single JSON file with a messages array
+    - Cursor: SQLite database with bubble events
     
     Example:
         >>> parser = EventParser('claude')
@@ -31,7 +32,7 @@ class EventParser:
         """Initialize the parser.
         
         Args:
-            provider: Name of the provider ('claude', 'codex', 'gemini')
+            provider: Name of the provider ('claude', 'codex', 'gemini', 'cursor')
         """
         self.provider = provider
     
@@ -50,6 +51,8 @@ class EventParser:
             yield from self._parse_codex_jsonl(path)
         elif self.provider == 'gemini':
             yield from self._parse_gemini_json(path)
+        elif self.provider == 'cursor':
+            yield from self._parse_cursor_session(path)
         else:
             raise ValueError(f"Unknown provider: {self.provider}")
     
@@ -78,6 +81,8 @@ class EventParser:
             return event
         elif self.provider == 'gemini':
             return self._parse_gemini_event(raw_json)
+        elif self.provider == 'cursor':
+            return self._parse_cursor_event(raw_json)
         else:
             raise ValueError(f"Unknown provider: {self.provider}")
     
@@ -463,4 +468,112 @@ class EventParser:
             event_type=msg_type if isinstance(msg_type, str) else None,
             content_text=content_text,
             raw_json=dict(raw),
+        )
+    
+    def _parse_cursor_session(self, path: Path) -> Iterator[AgentEvent]:
+        """Parse Cursor session from SQLite database.
+        
+        For Cursor, path should be Path(session_id) where session_id is the
+        composer ID. The actual database path is determined by CursorProvider.
+        
+        Note: This method requires the CursorProvider to fetch session data.
+        If called directly, it will attempt to read from the default DB path.
+        """
+        import sqlite3
+        from datetime import timezone
+        
+        # Determine session_id from path
+        session_id = path.name
+        if not session_id:
+            return
+        
+        # Default Cursor DB path
+        db_path = Path("~/Library/Application Support/Cursor/User/globalStorage/state.vscdb").expanduser()
+        
+        if not db_path.exists():
+            return
+        
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT value FROM cursorDiskKV
+                WHERE key = ? AND value IS NOT NULL
+            """, (f"composerData:{session_id}",))
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if not row or not row[0]:
+                return
+            
+            data = row[0]
+            if isinstance(data, bytes):
+                data = data.decode('utf-8')
+            
+            session_data = json.loads(data)
+            
+            # Get session timestamp
+            created_at = session_data.get('createdAt')
+            if created_at:
+                try:
+                    session_timestamp = datetime.fromtimestamp(created_at / 1000, tz=timezone.utc)
+                except (ValueError, OSError):
+                    session_timestamp = datetime.now(timezone.utc)
+            else:
+                session_timestamp = datetime.now(timezone.utc)
+            
+            # Get bubbles
+            bubbles = session_data.get('fullConversationHeadersOnly', [])
+            
+            for i, bubble in enumerate(bubbles):
+                event = self._parse_cursor_event({
+                    'bubbleId': bubble.get('bubbleId', f'unknown-{i}'),
+                    'type': bubble.get('type', 0),
+                    'composerId': session_id,
+                    'index': i,
+                    'timestamp': session_timestamp.isoformat(),
+                })
+                yield event
+                
+        except (sqlite3.Error, json.JSONDecodeError):
+            return
+    
+    def _parse_cursor_event(self, raw: Mapping[str, Any]) -> AgentEvent:
+        """Parse a single Cursor bubble event.
+        
+        Cursor bubbles have:
+        - bubbleId: unique identifier
+        - type: 1=user, 2=assistant
+        - composerId: session ID
+        - index: position in conversation
+        - timestamp: session timestamp (bubbles don't have individual timestamps)
+        """
+        bubble_type = raw.get('type', 0)
+        
+        # Map bubble type to role
+        if bubble_type == 1:
+            role = "user"
+        elif bubble_type == 2:
+            role = "assistant"
+        else:
+            role = "system"
+        
+        # Extract timestamp
+        timestamp = datetime.now()
+        ts_str = raw.get('timestamp')
+        if isinstance(ts_str, str) and ts_str:
+            try:
+                timestamp = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+            except ValueError:
+                pass
+        
+        return AgentEvent(
+            timestamp=timestamp,
+            role=role,
+            event_type="bubble",
+            content_text=None,  # Content not available in headers
+            raw_json=dict(raw),
+            session_id=raw.get('composerId') if isinstance(raw.get('composerId'), str) else None,
         )

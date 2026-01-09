@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentlog"
+version = "0.1.0"
+description = "Parse and normalize logs from AI coding assistants"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentlog"]

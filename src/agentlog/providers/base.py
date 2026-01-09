@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from pathlib import Path
 
 from ..models import SessionInfo
@@ -23,22 +23,19 @@ class SessionProvider(ABC):
     """
     
     @property
-    @abstractmethod
     def name(self) -> str:
         """Provider name (e.g., 'claude', 'codex', 'gemini')."""
-        ...
+        return "base"
     
     @property
-    @abstractmethod
     def watch_patterns(self) -> list[str]:
         """Glob patterns for watching session files.
         
         Used by file watchers to detect new/changed sessions.
         Example: ['~/.claude/projects/**/*.jsonl']
         """
-        ...
+        return []
     
-    @abstractmethod
     def parse_session_file(self, path: Path) -> SessionInfo | None:
         """Parse a session file and return session info.
         
@@ -48,9 +45,8 @@ class SessionProvider(ABC):
         Returns:
             SessionInfo if the file is a valid session, None otherwise
         """
-        ...
+        raise NotImplementedError
     
-    @abstractmethod
     def count_turns(self, path: Path) -> int:
         """Count the number of conversational turns in a session.
         
@@ -63,7 +59,7 @@ class SessionProvider(ABC):
         Returns:
             Number of turns in the session
         """
-        ...
+        raise NotImplementedError
     
     def derive_cwd_from_path(self, path: Path) -> str | None:
         """Derive the working directory from the session file path.

@@ -150,6 +150,7 @@ class CodexProvider(JSONLProvider):
                         tool_name=event.tool_name,
                         tool_input_json=event.tool_input_json,
                         tool_output_text=event.tool_output_text,
+                        tool_call_id=event.tool_call_id,
                         session_id=event.session_id or session_id,
                         cwd=event.cwd or cwd,
                         git_repo=event.git_repo or git_repo,
@@ -198,7 +199,10 @@ class CodexProvider(JSONLProvider):
         return None
 
     def _parse_codex_message(
-        self, obj: Mapping[str, Any], raw: Mapping[str, Any], timestamp: datetime
+        self,
+        obj: Mapping[str, Any],
+        raw: Mapping[str, Any],
+        timestamp: datetime,
     ) -> AgentEvent:
         """Parse a Codex message event."""
         role = obj.get("role", "user")
@@ -226,10 +230,14 @@ class CodexProvider(JSONLProvider):
         )
 
     def _parse_codex_function_call(
-        self, obj: Mapping[str, Any], raw: Mapping[str, Any], timestamp: datetime
+        self,
+        obj: Mapping[str, Any],
+        raw: Mapping[str, Any],
+        timestamp: datetime,
     ) -> AgentEvent:
         """Parse a Codex function_call event."""
         tool_name = obj.get("name")
+        call_id = obj.get("call_id")
 
         # Arguments may be JSON string or dict
         args = obj.get("arguments")
@@ -250,10 +258,14 @@ class CodexProvider(JSONLProvider):
             raw_json=dict(raw),
             tool_name=tool_name,
             tool_input_json=tool_input_json,
+            tool_call_id=call_id,
         )
 
     def _parse_codex_function_call_output(
-        self, obj: Mapping[str, Any], raw: Mapping[str, Any], timestamp: datetime
+        self,
+        obj: Mapping[str, Any],
+        raw: Mapping[str, Any],
+        timestamp: datetime,
     ) -> AgentEvent:
         """Parse a Codex function_call_output event."""
         output = obj.get("output")
@@ -281,8 +293,8 @@ class CodexProvider(JSONLProvider):
             event_type="tool_output",
             content_text=None,
             raw_json=dict(raw),
-            tool_name=call_id,  # Store call_id in tool_name for linking
             tool_output_text=tool_output_text,
+            tool_call_id=call_id,
         )
 
     @property

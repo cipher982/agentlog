@@ -71,6 +71,20 @@ class SessionProvider(ABC):
         """
         raise NotImplementedError
     
+    def parse_session(self, session: SessionInfo) -> Iterator[AgentEvent]:
+        """Parse all events for a given session.
+        
+        Defaults to calling parse_events(session.file_path).
+        Providers like Cursor may override this to use session_id.
+        
+        Args:
+            session: The session info to parse events for
+            
+        Yields:
+            AgentEvent for each event in the session
+        """
+        return self.parse_events(session.file_path)
+    
     def count_turns(self, path: Path) -> int:
         """Count the number of conversational turns in a session.
         

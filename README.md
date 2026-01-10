@@ -31,19 +31,16 @@ pip install agentlog
 ```python
 from agentlog import SessionRegistry, EventParser
 
-# 1) Discover sessions
+# List all sessions across all providers
 registry = SessionRegistry()
 for session in registry.list_sessions():
-    print(session.provider, session.session_id, session.turn_count, session.project)
+    print(f"{session.provider}: {session.session_id} ({session.turn_count} turns)")
 
-# 2) Stream normalized events
-session = next(registry.list_sessions(provider="codex"))
-parser = EventParser(session.provider, registry=registry)
-for event in parser.parse_session_file(session.file_path):
-    if event.is_tool_call:
-        print("tool:", event.tool_name)
-    elif event.content_text:
-        print(event.role + ":", event.content_text[:60])
+# Parse events from a specific session (preferred way)
+parser = EventParser(session.provider)
+for event in parser.parse_session(session):
+    print(f"{event.role}: {event.content_text[:50]}")
+
 ```
 
 ## Event Stream

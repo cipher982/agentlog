@@ -143,7 +143,7 @@ def test_event_parser_codex_function_call_output_parsing(tmp_path: Path) -> None
     event = events[0]
     assert event.role == "tool"
     assert event.event_type == "tool_output"
-    assert event.tool_name == "call_abc123"  # call_id stored for linking
+    assert event.tool_call_id == "call_abc123"  # call_id stored for linking
     assert event.tool_output_text == "total 42\ndrwxr-xr-x  5 user staff 160 Jan  1 00:00 ."
     assert event.session_id == "sid-fco"
 
@@ -223,13 +223,14 @@ def test_event_parser_codex_tool_fields_populated(tmp_path: Path) -> None:
     # Verify function_call event fields
     fc_event = events[0]
     assert fc_event.tool_name == "write_file"
-    assert fc_event.tool_input_json == {"path": "/tmp/test.txt", "content": "hello world"}
+    assert fc_event.tool_input_json == {"path":"/tmp/test.txt","content":"hello world"}
     assert fc_event.tool_output_text is None
     assert fc_event.content_text is None
+    assert fc_event.tool_call_id == "call_write"
     
     # Verify function_call_output event fields
     fco_event = events[1]
-    assert fco_event.tool_name == "call_write"  # call_id for linking
+    assert fco_event.tool_call_id == "call_write"  # call_id for linking
     assert fco_event.tool_input_json is None
     assert fco_event.tool_output_text == "File written successfully"
     assert fco_event.content_text is None

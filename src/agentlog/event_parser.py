@@ -46,6 +46,20 @@ class EventParser:
         """
         yield from self.provider.parse_events(path)
     
+    def parse_session(self, session: SessionInfo) -> Iterator[AgentEvent]:
+        """Parse all events for a given session.
+        
+        This is the preferred way to parse events as it handles non-file
+        providers (like Cursor) correctly.
+        
+        Args:
+            session: The session info to parse events for
+            
+        Yields:
+            AgentEvent for each event in the session
+        """
+        yield from self.provider.parse_session(session)
+    
     def parse_event(self, raw_json: Mapping[str, Any]) -> AgentEvent:
         """Parse a single event from raw JSON.
         

@@ -173,6 +173,23 @@ class TestCursorProviderWithMockedDatabase:
         assert isinstance(sessions, list)
         assert len(sessions) == 2
 
+    def test_parse_events(self, provider: CursorProvider) -> None:
+        """Test parsing events for a session ID."""
+        events = list(provider.parse_events(Path("test-session-123")))
+        assert len(events) == 4
+        assert all(e.session_id == "test-session-123" for e in events)
+        assert events[0].role == "user"
+        assert events[1].role == "assistant"
+
+    def test_parse_session(self, provider: CursorProvider) -> None:
+        """Test parsing events from a SessionInfo object."""
+        session = provider.parse_session_file(Path("test-session-123"))
+        assert session is not None
+        
+        events = list(provider.parse_session(session))
+        assert len(events) == 4
+        assert all(e.session_id == "test-session-123" for e in events)
+
 
 class TestCursorProviderEdgeCases:
     """Tests for edge cases and error handling."""

@@ -238,14 +238,22 @@ class CursorProvider(SessionProvider):
     def parse_events(self, path: Path) -> Iterator[AgentEvent]:
         """Parse all events from a Cursor session.
         
-        For Cursor, path should be Path(session_id) where session_id is the
-        composer ID. The actual database path is determined by CursorProvider.
+        Args:
+            path: Path containing session_id as its name component.
         """
         # Determine session_id from path
         session_id = path.name
         if not session_id:
             return
         
+        yield from self._parse_session_by_id(session_id)
+
+    def parse_session(self, session: SessionInfo) -> Iterator[AgentEvent]:
+        """Parse all events for a given Cursor session using its ID."""
+        yield from self._parse_session_by_id(session.session_id)
+
+    def _parse_session_by_id(self, session_id: str) -> Iterator[AgentEvent]:
+        """Internal helper to parse events from SQLite by session ID."""
         if not self._db_path.exists():
             return
         

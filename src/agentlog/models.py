@@ -32,13 +32,14 @@ class AgentEvent:
     """A single event from an agent session."""
     
     timestamp: datetime
-    role: str               # 'user', 'assistant', 'system'
+    role: str               # 'user', 'assistant', 'system', 'tool'
     event_type: str | None
     content_text: str | None
     raw_json: dict[str, Any]
     tool_name: str | None = None
     tool_input_json: Any | None = None
     tool_output_text: str | None = None
+    tool_call_id: str | None = None
     session_id: str | None = None
     cwd: str | None = None
     git_repo: str | None = None
@@ -46,21 +47,11 @@ class AgentEvent:
     git_commit: str | None = None
 
     @property
-    def is_user(self) -> bool:
-        """Return True if the event is a user message."""
-        return self.role == "user"
-
-    @property
-    def is_assistant(self) -> bool:
-        """Return True if the event is an assistant message."""
-        return self.role == "assistant"
-
-    @property
     def is_tool_call(self) -> bool:
         """Return True if the event is a tool call."""
-        return self.event_type in ("tool_call", "tool_use") or self.tool_name is not None
+        return self.event_type in ("tool_call", "tool_use") or self.tool_name is not None or self.tool_call_id is not None
 
     @property
     def is_tool_output(self) -> bool:
         """Return True if the event is a tool output."""
-        return self.event_type in ("tool_output", "tool_result") or self.tool_output_text is not None
+        return self.role == "tool" or self.event_type in ("tool_output", "tool_result") or self.tool_output_text is not None

@@ -300,3 +300,45 @@ def test_event_parser_claude_jsonl_text_and_tool_fields(tmp_path: Path) -> None:
     assert events[1].tool_name == "exec_command"
     assert events[1].tool_input_json == {"cmd": "ls"}
     assert events[1].tool_output_text == "ok"
+    assert events[1].event_type == "tool_call"
+
+
+def test_event_parser_claude_tool_call_id(tmp_path: Path) -> None:
+    """Claude tool_use.id should be extracted as tool_call_id."""
+    p = tmp_path / "session.jsonl"
+    lines = [
+        json.dumps(
+            {
+                "type": "assistant",
+                "timestamp": "2025-01-01T00:00:00.000Z",
+                "sessionId": "sid-5",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "Let me read that file."},
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_01ABC123",
+                            "name": "Read",
+                            "input": {"file_path": "/foo/bar.py"},
+                        },
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_01ABC123",
+                            "content": "def hello(): pass",
+                        },
+                    ],
+                },
+            }
+        ),
+    ]
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    events = list(EventParser("claude").parse_session_file(p))
+    assert len(events) == 1
+    event = events[0]
+    assert event.tool_name == "Read"
+    assert event.tool_call_id == "toolu_01ABC123"
+    assert event.tool_input_json == {"file_path": "/foo/bar.py"}
+    assert event.tool_output_text == "def hello(): pass"
+    assert event.event_type == "tool_call"

@@ -198,6 +198,7 @@ class ClaudeProvider(JSONLProvider):
         tool_name = None
         tool_input = None
         tool_output = None
+        tool_call_id = None
 
         if isinstance(message, dict):
             content = message.get("content", [])
@@ -207,6 +208,7 @@ class ClaudeProvider(JSONLProvider):
                         if part.get("type") == "tool_use":
                             tool_name = part.get("name")
                             tool_input = part.get("input")
+                            tool_call_id = part.get("id")
                         elif part.get("type") == "tool_result":
                             tool_output = part.get("content")
 
@@ -218,6 +220,10 @@ class ClaudeProvider(JSONLProvider):
                 else json.dumps(tool_output, ensure_ascii=False)
             )
 
+        # Override event_type if this is a tool call
+        if tool_name is not None:
+            event_type = "tool_call"
+
         return AgentEvent(
             timestamp=timestamp,
             role=role,
@@ -227,6 +233,7 @@ class ClaudeProvider(JSONLProvider):
             tool_name=tool_name,
             tool_input_json=tool_input,
             tool_output_text=tool_output_text,
+            tool_call_id=tool_call_id,
             session_id=raw.get("sessionId")
             if isinstance(raw.get("sessionId"), str)
             else None,

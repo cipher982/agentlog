@@ -29,18 +29,24 @@ pip install agentlog
 ## Quickstart
 
 ```python
+from datetime import datetime
 from agentlog import SessionRegistry, EventParser
 
 # List all sessions across all providers
 registry = SessionRegistry()
 sessions = list(registry.list_sessions())
+
+# Sort by last activity (most recent first)
+sessions.sort(key=lambda s: s.last_activity or datetime.min, reverse=True)
+
 for session in sessions:
     print(f"{session.provider}: {session.session_id} ({session.turn_count} turns)")
 
 # Parse events from the most recent session
 if sessions:
     latest = sessions[0]
-    parser = EventParser(latest.provider)
+    # Reuse registry to avoid redundant discovery/config mismatches
+    parser = EventParser(latest.provider, registry=registry)
     for event in parser.parse_session(latest):
         print(f"{event.role}: {event.content_text[:50]}")
 ```

@@ -20,9 +20,9 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, Any, Iterator, Mapping
 
-from ..provider import SessionInfo, SessionProvider
+from ..providers.base import AgentEvent, SessionInfo, SessionProvider
 
 if TYPE_CHECKING:
     pass
@@ -235,6 +235,98 @@ class CursorProvider(SessionProvider):
         
         return count
     
+    def parse_events(self, path: Path) -> Iterator[AgentEvent]:
+        """Parse all events from a Cursor session.
+        
+        For Cursor, path should be Path(session_id) where session_id is the
+        composer ID. The actual database path is determined by CursorProvider.
+        """
+        # Determine session_id from path
+        session_id = path.name
+        if not session_id:
+            return
+        
+        if not self._db_path.exists():
+            return
+        
+        try:
+            # Connect in read-only mode
+            conn = sqlite3.connect(f"file:{self._db_path}?mode=ro", uri=True)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT value FROM cursorDiskKV
+                WHERE key = ? AND value IS NOT NULL
+            """, (f"composerData:{session_id}",))
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if not row or not row[0]:
+                return
+            
+            data = row[0]
+            if isinstance(data, bytes):
+                data = data.decode('utf-8')
+            
+            session_data = json.loads(data)
+            
+            # Get session timestamp
+            created_at = session_data.get('createdAt')
+            if created_at:
+                try:
+                    session_timestamp = datetime.fromtimestamp(created_at / 1000, tz=timezone.utc)
+                except (ValueError, OSError):
+                    session_timestamp = datetime.now(timezone.utc)
+            else:
+                session_timestamp = datetime.now(timezone.utc)
+            
+            # Get bubbles
+            bubbles = session_data.get('fullConversationHeadersOnly', [])
+            
+            for i, bubble in enumerate(bubbles):
+                event = self._parse_event({
+                    'bubbleId': bubble.get('bubbleId', f'unknown-{i}'),
+                    'type': bubble.get('type', 0),
+                    'composerId': session_id,
+                    'index': i,
+                    'timestamp': session_timestamp.isoformat(),
+                })
+                yield event
+                
+        except (sqlite3.Error, json.JSONDecodeError):
+            return
+
+    def _parse_event(self, raw: Mapping[str, Any]) -> AgentEvent:
+        """Parse a single Cursor bubble event."""
+        bubble_type = raw.get('type', 0)
+        
+        # Map bubble type to role
+        if bubble_type == 1:
+            role = "user"
+        elif bubble_type == 2:
+            role = "assistant"
+        else:
+            role = "system"
+        
+        # Extract timestamp
+        timestamp = datetime.now()
+        ts_str = raw.get('timestamp')
+        if isinstance(ts_str, str) and ts_str:
+            try:
+                timestamp = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+            except ValueError:
+                pass
+        
+        return AgentEvent(
+            timestamp=timestamp,
+            role=role,
+            event_type="bubble",
+            content_text=None,  # Content not available in headers
+            raw_json=dict(raw),
+            session_id=raw.get('composerId') if isinstance(raw.get('composerId'), str) else None,
+        )
+
     def count_turns(self, path: Path) -> int:
         """Count the number of conversational turns in a session.
         

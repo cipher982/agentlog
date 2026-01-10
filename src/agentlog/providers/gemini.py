@@ -28,8 +28,9 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Iterator, Mapping
 
-from ..provider import SessionInfo, SessionProvider
+from ..providers.base import AgentEvent, SessionInfo, SessionProvider
 
 
 def _hash_cwd(cwd: str) -> str:
@@ -168,6 +169,74 @@ class GeminiProvider(SessionProvider):
             project=project,
             last_activity=last_activity,
             extra=extra,
+        )
+
+    def parse_events(self, path: Path) -> Iterator[AgentEvent]:
+        """Parse all events from a Gemini session file."""
+        data = self._read_session_data(path)
+        if not data:
+            return
+
+        # Gemini uses a 'messages' array and stores sessionId at root
+        session_id = data.get("sessionId") if isinstance(data, dict) else None
+        messages = data.get("messages", []) if isinstance(data, dict) else []
+        for msg in messages:
+            event = self._parse_event(msg)
+            if isinstance(session_id, str) and session_id and event.session_id is None:
+                event = AgentEvent(
+                    timestamp=event.timestamp,
+                    role=event.role,
+                    event_type=event.event_type,
+                    content_text=event.content_text,
+                    raw_json=event.raw_json,
+                    tool_name=event.tool_name,
+                    tool_input_json=event.tool_input_json,
+                    tool_output_text=event.tool_output_text,
+                    session_id=session_id,
+                    cwd=event.cwd,
+                    git_repo=event.git_repo,
+                    git_branch=event.git_branch,
+                    git_commit=event.git_commit,
+                )
+            yield event
+
+    def _parse_event(self, raw: Mapping[str, Any]) -> AgentEvent:
+        """Parse a single Gemini event."""
+        msg_type = raw.get("type")
+        if msg_type == "gemini":
+            role = "assistant"
+        else:
+            role = "user"
+
+        content_text = None
+        content = raw.get("content")
+        if isinstance(content, str):
+            content_text = content
+        elif isinstance(content, list):
+            parts: list[str] = []
+            for part in content:
+                if isinstance(part, str):
+                    parts.append(part)
+                elif isinstance(part, dict):
+                    text = part.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+            content_text = "\n".join(parts) if parts else None
+
+        timestamp = datetime.now()
+        ts_str = raw.get("timestamp")
+        if isinstance(ts_str, str) and ts_str:
+            try:
+                timestamp = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+
+        return AgentEvent(
+            timestamp=timestamp,
+            role=role,
+            event_type=msg_type if isinstance(msg_type, str) else None,
+            content_text=content_text,
+            raw_json=dict(raw),
         )
 
     def count_turns(self, path: Path) -> int:

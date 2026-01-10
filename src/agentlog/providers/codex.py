@@ -15,12 +15,11 @@ Turn counting rules:
 from __future__ import annotations
 
 import json
-import threading
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Iterator, Mapping
 
-from ..provider import SessionInfo, SessionProvider
+from ..providers.base import JSONLProvider, SessionInfo, AgentEvent
 
 
 def _is_turn_event(obj: dict) -> bool:
@@ -49,22 +48,7 @@ def _is_turn_event(obj: dict) -> bool:
     return role in ("user", "assistant")
 
 
-@dataclass
-class TurnCountState:
-    """Incremental turn counting state for efficient updates.
-
-    Tracks file position to only parse new content on updates.
-    Falls back to full recount if file shrinks (truncated/replaced).
-    """
-
-    pos: int = 0
-    size: int = 0
-    mtime_ns: int = 0
-    remainder: bytes = b""
-    turn_count: int = 0
-
-
-class CodexProvider(SessionProvider):
+class CodexProvider(JSONLProvider):
     """Session provider for Codex CLI (OpenAI)."""
 
     def __init__(self, home: Path | None = None):
@@ -73,13 +57,233 @@ class CodexProvider(SessionProvider):
         Args:
             home: Home directory path. Defaults to Path.home().
         """
+        super().__init__()
         self._home = home or Path.home()
-        self._turn_cache: dict[Path, TurnCountState] = {}
-        self._cache_lock = threading.Lock()
 
     @property
     def name(self) -> str:
         return "codex"
+
+    def is_turn_event(self, obj: dict) -> bool:
+        """Check if a JSONL event counts as a conversational turn."""
+        return _is_turn_event(obj)
+
+    def parse_events(self, path: Path) -> Iterator[AgentEvent]:
+        """Parse all events from a Codex session file."""
+        session_id: str | None = None
+        cwd: str | None = None
+        git_repo: str | None = None
+        git_branch: str | None = None
+        git_commit: str | None = None
+
+        def _capture_git_from_mapping(m: Mapping[str, Any]) -> None:
+            nonlocal git_repo, git_branch, git_commit
+            repo = m.get("repository_url")
+            if isinstance(repo, str) and repo:
+                git_repo = repo
+            branch = m.get("branch")
+            if isinstance(branch, str) and branch:
+                git_branch = branch
+            commit = m.get("commit_hash")
+            if isinstance(commit, str) and commit:
+                git_commit = commit
+
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    raw = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(raw, dict):
+                    continue
+
+                # New format: session metadata.
+                if raw.get("type") == "session_meta":
+                    payload = raw.get("payload")
+                    if isinstance(payload, dict):
+                        sid = payload.get("id")
+                        if isinstance(sid, str) and sid:
+                            session_id = sid
+                        session_cwd = payload.get("cwd")
+                        if isinstance(session_cwd, str) and session_cwd:
+                            cwd = session_cwd
+                        git = payload.get("git")
+                        if isinstance(git, dict):
+                            _capture_git_from_mapping(git)
+                    continue
+
+                # New format: turn context can include cwd.
+                if raw.get("type") == "turn_context":
+                    payload = raw.get("payload")
+                    if isinstance(payload, dict):
+                        context_cwd = payload.get("cwd")
+                        if isinstance(context_cwd, str) and context_cwd:
+                            cwd = context_cwd
+                    continue
+
+                # Metadata header (first line): {"id": "...", "timestamp": "...", ...} with no "type"
+                if "type" not in raw and "id" in raw and "timestamp" in raw:
+                    sid = raw.get("id")
+                    if isinstance(sid, str) and sid:
+                        session_id = sid
+                    git = raw.get("git")
+                    if isinstance(git, dict):
+                        _capture_git_from_mapping(git)
+                    continue
+
+                # Parse the event (message, function_call, or function_call_output)
+                event = self._parse_event(raw)
+                if event is None:
+                    continue
+
+                # Enrich event with session context
+                if session_id or cwd or git_repo or git_branch or git_commit:
+                    event = AgentEvent(
+                        timestamp=event.timestamp,
+                        role=event.role,
+                        event_type=event.event_type,
+                        content_text=event.content_text,
+                        raw_json=event.raw_json,
+                        tool_name=event.tool_name,
+                        tool_input_json=event.tool_input_json,
+                        tool_output_text=event.tool_output_text,
+                        session_id=event.session_id or session_id,
+                        cwd=event.cwd or cwd,
+                        git_repo=event.git_repo or git_repo,
+                        git_branch=event.git_branch or git_branch,
+                        git_commit=event.git_commit or git_commit,
+                    )
+                yield event
+
+    def _parse_event(self, raw: Mapping[str, Any]) -> AgentEvent | None:
+        """Parse a single Codex event."""
+        raw_type = raw.get("type")
+
+        # Extract timestamp (used by all event types)
+        timestamp = datetime.now()
+        ts_str = raw.get("timestamp")
+        if isinstance(ts_str, str) and ts_str:
+            try:
+                timestamp = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+
+        # Handle response_item wrapper (current format)
+        if raw_type == "response_item":
+            payload = raw.get("payload")
+            if not isinstance(payload, dict):
+                return None
+            payload_type = payload.get("type")
+
+            if payload_type == "message":
+                return self._parse_codex_message(payload, raw, timestamp)
+            elif payload_type == "function_call":
+                return self._parse_codex_function_call(payload, raw, timestamp)
+            elif payload_type == "function_call_output":
+                return self._parse_codex_function_call_output(payload, raw, timestamp)
+            else:
+                return None
+
+        # Handle legacy format (type at top level)
+        elif raw_type == "message":
+            return self._parse_codex_message(raw, raw, timestamp)
+        elif raw_type == "function_call":
+            return self._parse_codex_function_call(raw, raw, timestamp)
+        elif raw_type == "function_call_output":
+            return self._parse_codex_function_call_output(raw, raw, timestamp)
+
+        return None
+
+    def _parse_codex_message(
+        self, obj: Mapping[str, Any], raw: Mapping[str, Any], timestamp: datetime
+    ) -> AgentEvent:
+        """Parse a Codex message event."""
+        role = obj.get("role", "user")
+
+        content_text = None
+        content = obj.get("content")
+        if isinstance(content, str):
+            content_text = content
+        elif isinstance(content, list):
+            parts: list[str] = []
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                text = part.get("text")
+                if isinstance(text, str) and text:
+                    parts.append(text)
+            content_text = "\n".join(parts) if parts else None
+
+        return AgentEvent(
+            timestamp=timestamp,
+            role=role if role in ("user", "assistant", "system") else "user",
+            event_type="message",
+            content_text=content_text,
+            raw_json=dict(raw),
+        )
+
+    def _parse_codex_function_call(
+        self, obj: Mapping[str, Any], raw: Mapping[str, Any], timestamp: datetime
+    ) -> AgentEvent:
+        """Parse a Codex function_call event."""
+        tool_name = obj.get("name")
+
+        # Arguments may be JSON string or dict
+        args = obj.get("arguments")
+        tool_input_json: Any = None
+        if isinstance(args, str):
+            try:
+                tool_input_json = json.loads(args)
+            except json.JSONDecodeError:
+                tool_input_json = args
+        elif args is not None:
+            tool_input_json = args
+
+        return AgentEvent(
+            timestamp=timestamp,
+            role="assistant",
+            event_type="tool_call",
+            content_text=None,
+            raw_json=dict(raw),
+            tool_name=tool_name,
+            tool_input_json=tool_input_json,
+        )
+
+    def _parse_codex_function_call_output(
+        self, obj: Mapping[str, Any], raw: Mapping[str, Any], timestamp: datetime
+    ) -> AgentEvent:
+        """Parse a Codex function_call_output event."""
+        output = obj.get("output")
+        tool_output_text: str | None = None
+
+        if isinstance(output, str):
+            # Output may be JSON-encoded with nested "output" field
+            try:
+                parsed = json.loads(output)
+                if isinstance(parsed, dict) and "output" in parsed:
+                    tool_output_text = parsed.get("output")
+                else:
+                    tool_output_text = output
+            except json.JSONDecodeError:
+                tool_output_text = output
+        elif output is not None:
+            tool_output_text = json.dumps(output, ensure_ascii=False)
+
+        # call_id can be used to link back to the function_call
+        call_id = obj.get("call_id")
+
+        return AgentEvent(
+            timestamp=timestamp,
+            role="tool",
+            event_type="tool_output",
+            content_text=None,
+            raw_json=dict(raw),
+            tool_name=call_id,  # Store call_id in tool_name for linking
+            tool_output_text=tool_output_text,
+        )
 
     @property
     def watch_patterns(self) -> list[str]:
@@ -145,20 +349,6 @@ class CodexProvider(SessionProvider):
             last_activity=last_activity,
             extra=extra,
         )
-
-    def count_turns(self, path: Path) -> int:
-        """Count conversational turns with incremental caching."""
-        with self._cache_lock:
-            cached = self._turn_cache.get(path)
-            if cached:
-                updated = self._update_turn_count(path, cached)
-                self._turn_cache[path] = updated
-                return updated.turn_count
-
-            # Full count for new file
-            state = self._count_turns_full(path)
-            self._turn_cache[path] = state
-            return state.turn_count
 
     def find_session_for_cwd(self, cwd: str) -> SessionInfo | None:
         """Find the most recent session for a given working directory.
@@ -240,97 +430,3 @@ class CodexProvider(SessionProvider):
             tail = tail[:-4]
         tail = tail.strip()
         return tail or None
-
-    def _count_turns_full(self, path: Path) -> TurnCountState:
-        """Full turn count by streaming the entire file."""
-        try:
-            stat = path.stat()
-        except OSError:
-            return TurnCountState()
-
-        turns = 0
-        remainder = b""
-        pos = 0
-
-        try:
-            with path.open("rb") as f:
-                while True:
-                    chunk = f.read(1024 * 1024)  # 1MB chunks
-                    if not chunk:
-                        break
-                    pos += len(chunk)
-                    buf = remainder + chunk
-                    parts = buf.split(b"\n")
-                    remainder = b""
-                    if buf and not buf.endswith(b"\n"):
-                        remainder = parts.pop() if parts else buf
-
-                    for raw in parts:
-                        raw = raw.strip()
-                        if not raw:
-                            continue
-                        try:
-                            obj = json.loads(raw.decode("utf-8"))
-                        except Exception:
-                            continue
-                        if _is_turn_event(obj):
-                            turns += 1
-        except OSError:
-            return TurnCountState()
-
-        return TurnCountState(
-            pos=stat.st_size,
-            size=stat.st_size,
-            mtime_ns=stat.st_mtime_ns,
-            remainder=remainder,
-            turn_count=turns,
-        )
-
-    def _update_turn_count(self, path: Path, state: TurnCountState) -> TurnCountState:
-        """Incrementally update turn count from newly appended bytes."""
-        try:
-            stat = path.stat()
-        except OSError:
-            return state
-
-        # If file shrank or our position is past EOF, do full recount
-        if stat.st_size < state.size or state.pos > stat.st_size:
-            return self._count_turns_full(path)
-
-        # If unchanged, return cached state
-        if stat.st_size == state.size and stat.st_mtime_ns == state.mtime_ns:
-            return state
-
-        # Read only the new bytes
-        try:
-            with path.open("rb") as f:
-                f.seek(state.pos)
-                data = f.read()
-        except OSError:
-            return self._count_turns_full(path)
-
-        buf = state.remainder + (data or b"")
-        lines = buf.split(b"\n")
-        remainder = b""
-        if buf and not buf.endswith(b"\n"):
-            remainder = lines.pop() if lines else buf
-
-        turns = state.turn_count
-        for raw in lines:
-            raw = raw.strip()
-            if not raw:
-                continue
-            try:
-                obj = json.loads(raw.decode("utf-8"))
-            except Exception:
-                continue
-            if _is_turn_event(obj):
-                turns += 1
-
-        return TurnCountState(
-            pos=stat.st_size,
-            size=stat.st_size,
-            mtime_ns=stat.st_mtime_ns,
-            remainder=remainder,
-            turn_count=turns,
-        )

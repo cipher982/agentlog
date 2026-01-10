@@ -4,7 +4,14 @@ Unified Python API for reading agent session logs from:
 - Claude Code
 - Codex CLI
 - Gemini CLI
-- Cursor (planned)
+- Cursor
+
+## Features
+
+- **Unified Model**: Consistent `SessionInfo` and `AgentEvent` models across all providers.
+- **Incremental Turn Counting**: Fast, cached turn counting for JSONL logs.
+- **Project Discovery**: Automatically derives project names by searching for `.git` roots.
+- **Lazy Discovery**: Providers are loaded only when needed.
 
 ## Installation
 
@@ -38,6 +45,9 @@ Sessions stored in `~/.codex/sessions/YYYY/MM/DD/*.jsonl`
 
 ### Gemini CLI
 Sessions stored in `~/.gemini/tmp/<hash>/chats/session-*.json`
+
+### Cursor
+Sessions stored in SQLite database at `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`
 
 ## License
 

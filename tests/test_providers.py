@@ -216,40 +216,25 @@ class TestDeriveProjectFromCwd:
         # Use any provider - they all inherit from SessionProvider
         return ClaudeProvider()
 
-    def test_direct_git_project(self, provider: ClaudeProvider) -> None:
-        """Test /git/<project>/ pattern."""
-        result = provider.derive_project_from_cwd("/Users/davidrose/git/agentlog")
-        assert result == "agentlog"
+    def test_direct_git_project(self, provider: ClaudeProvider, tmp_path: Path) -> None:
+        """Test finding project root via .git directory."""
+        project_root = tmp_path / "my-project"
+        project_root.mkdir()
+        (project_root / ".git").mkdir()
+        
+        subdir = project_root / "src" / "deep"
+        subdir.mkdir(parents=True)
+        
+        result = provider.derive_project_from_cwd(str(subdir))
+        assert result == "my-project"
 
-    def test_direct_git_project_with_trailing_slash(self, provider: ClaudeProvider) -> None:
-        """Test /git/<project>/ with trailing slash."""
-        result = provider.derive_project_from_cwd("/Users/davidrose/git/agentlog/")
-        assert result == "agentlog"
-
-    def test_nested_under_me_category(self, provider: ClaudeProvider) -> None:
-        """Test /git/me/<category>/<project>/ pattern."""
-        result = provider.derive_project_from_cwd("/Users/davidrose/git/me/mytech/life-hub")
-        assert result == "life-hub"
-
-    def test_nested_under_me_with_subdirs(self, provider: ClaudeProvider) -> None:
-        """Test /git/me/<category>/<project>/subdir/subdir pattern."""
-        result = provider.derive_project_from_cwd("/Users/davidrose/git/me/mytech/life-hub/src/foo")
-        assert result == "life-hub"
-
-    def test_nested_under_zeta_category(self, provider: ClaudeProvider) -> None:
-        """Test /git/zeta/<project>/ pattern."""
-        result = provider.derive_project_from_cwd("/Users/davidrose/git/zeta/work-project/src")
-        assert result == "work-project"
-
-    def test_direct_project_with_subdir(self, provider: ClaudeProvider) -> None:
-        """Test /git/<project>/subdir pattern."""
-        result = provider.derive_project_from_cwd("/Users/davidrose/git/zerg/workers")
-        assert result == "zerg"
-
-    def test_no_git_pattern_fallback_to_basename(self, provider: ClaudeProvider) -> None:
-        """Test fallback to basename when no /git/ found."""
-        result = provider.derive_project_from_cwd("/tmp/random/path")
-        assert result == "path"
+    def test_fallback_to_basename(self, provider: ClaudeProvider, tmp_path: Path) -> None:
+        """Test fallback to basename when no .git found."""
+        random_path = tmp_path / "foo" / "bar" / "baz"
+        random_path.mkdir(parents=True)
+        
+        result = provider.derive_project_from_cwd(str(random_path))
+        assert result == "baz"
 
     def test_empty_cwd(self, provider: ClaudeProvider) -> None:
         """Test empty cwd returns None."""
@@ -271,9 +256,3 @@ class TestDeriveProjectFromCwd:
         result = provider.derive_project_from_cwd("/")
         # Root has no name component
         assert result is None or result == ""
-
-    def test_category_dir_only(self, provider: ClaudeProvider) -> None:
-        """Test path ending at category dir (edge case)."""
-        result = provider.derive_project_from_cwd("/Users/davidrose/git/me")
-        # Falls back to basename since no project found after category
-        assert result == "me"

@@ -19,6 +19,13 @@ class SessionInfo:
     last_activity: datetime | None = None
     extra: Mapping[str, Any] = field(default_factory=dict)
 
+    @property
+    def last_activity_fmt(self) -> str:
+        """Return formatted last activity timestamp."""
+        if self.last_activity:
+            return self.last_activity.strftime("%Y-%m-%d %H:%M:%S")
+        return "Unknown"
+
 
 @dataclass(frozen=True)
 class AgentEvent:
@@ -37,3 +44,23 @@ class AgentEvent:
     git_repo: str | None = None
     git_branch: str | None = None
     git_commit: str | None = None
+
+    @property
+    def is_user(self) -> bool:
+        """Return True if the event is a user message."""
+        return self.role == "user"
+
+    @property
+    def is_assistant(self) -> bool:
+        """Return True if the event is an assistant message."""
+        return self.role == "assistant"
+
+    @property
+    def is_tool_call(self) -> bool:
+        """Return True if the event is a tool call."""
+        return self.event_type in ("tool_call", "tool_use") or self.tool_name is not None
+
+    @property
+    def is_tool_output(self) -> bool:
+        """Return True if the event is a tool output."""
+        return self.event_type in ("tool_output", "tool_result") or self.tool_output_text is not None

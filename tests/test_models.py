@@ -301,3 +301,68 @@ class TestAgentEvent:
             tool_input_json=None,
         )
         assert event3.tool_input_json is None
+
+
+class TestAgentEventHelpers:
+    """Tests for AgentEvent property helpers."""
+
+    def test_role_helpers(self) -> None:
+        """Test is_user, is_assistant, is_system, is_tool."""
+        now = datetime.now()
+        
+        user_event = AgentEvent(timestamp=now, role="user", event_type="message", content_text="hi", raw_json={})
+        assert user_event.is_user
+        assert not user_event.is_assistant
+        assert not user_event.is_system
+        assert not user_event.is_tool
+
+        assistant_event = AgentEvent(timestamp=now, role="assistant", event_type="message", content_text="hello", raw_json={})
+        assert assistant_event.is_assistant
+        assert not assistant_event.is_user
+        
+        system_event = AgentEvent(timestamp=now, role="system", event_type="message", content_text="init", raw_json={})
+        assert system_event.is_system
+        
+        tool_event = AgentEvent(timestamp=now, role="tool", event_type="tool_output", content_text=None, raw_json={})
+        assert tool_event.is_tool
+
+    def test_tool_call_helper(self) -> None:
+        """Test is_tool_call."""
+        now = datetime.now()
+        
+        # Explicit event type
+        call1 = AgentEvent(timestamp=now, role="assistant", event_type="tool_call", content_text=None, raw_json={})
+        assert call1.is_tool_call
+        
+        # Claude style (tool_use)
+        call2 = AgentEvent(timestamp=now, role="assistant", event_type="tool_use", content_text=None, raw_json={})
+        assert call2.is_tool_call
+        
+        # Role + tool_name (Codex/others)
+        call3 = AgentEvent(timestamp=now, role="assistant", event_type="message", content_text=None, raw_json={}, tool_name="ls")
+        assert call3.is_tool_call
+        
+        # Tool output should NOT be a tool call even if it has tool_call_id
+        output = AgentEvent(timestamp=now, role="tool", event_type="tool_output", content_text=None, raw_json={}, tool_call_id="c1")
+        assert not output.is_tool_call
+        assert output.is_tool_output
+
+    def test_tool_output_helper(self) -> None:
+        """Test is_tool_output."""
+        now = datetime.now()
+        
+        # Explicit role
+        out1 = AgentEvent(timestamp=now, role="tool", event_type="message", content_text=None, raw_json={})
+        assert out1.is_tool_output
+        
+        # Explicit event type
+        out2 = AgentEvent(timestamp=now, role="assistant", event_type="tool_output", content_text=None, raw_json={})
+        assert out2.is_tool_output
+        
+        # Claude style (tool_result)
+        out3 = AgentEvent(timestamp=now, role="user", event_type="tool_result", content_text=None, raw_json={})
+        assert out3.is_tool_output
+        
+        # Presence of output text
+        out4 = AgentEvent(timestamp=now, role="user", event_type="message", content_text=None, raw_json={}, tool_output_text="ok")
+        assert out4.is_tool_output

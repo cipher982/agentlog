@@ -33,14 +33,16 @@ from agentlog import SessionRegistry, EventParser
 
 # List all sessions across all providers
 registry = SessionRegistry()
-for session in registry.list_sessions():
+sessions = list(registry.list_sessions())
+for session in sessions:
     print(f"{session.provider}: {session.session_id} ({session.turn_count} turns)")
 
-# Parse events from a specific session (preferred way)
-parser = EventParser(session.provider)
-for event in parser.parse_session(session):
-    print(f"{event.role}: {event.content_text[:50]}")
-
+# Parse events from the most recent session
+if sessions:
+    latest = sessions[0]
+    parser = EventParser(latest.provider)
+    for event in parser.parse_session(latest):
+        print(f"{event.role}: {event.content_text[:50]}")
 ```
 
 ## Event Stream

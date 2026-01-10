@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
 from .registry import SessionRegistry
-from .models import AgentEvent
+from .models import AgentEvent, SessionInfo
 
 if TYPE_CHECKING:
     from typing import Iterator

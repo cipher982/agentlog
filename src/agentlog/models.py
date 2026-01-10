@@ -47,9 +47,30 @@ class AgentEvent:
     git_commit: str | None = None
 
     @property
+    def is_user(self) -> bool:
+        """Return True if the event is a user message."""
+        return self.role == "user"
+
+    @property
+    def is_assistant(self) -> bool:
+        """Return True if the event is an assistant message."""
+        return self.role == "assistant"
+
+    @property
+    def is_system(self) -> bool:
+        """Return True if the event is a system message."""
+        return self.role == "system"
+
+    @property
+    def is_tool(self) -> bool:
+        """Return True if the event is a tool message."""
+        return self.role == "tool"
+
+    @property
     def is_tool_call(self) -> bool:
         """Return True if the event is a tool call."""
-        return self.event_type in ("tool_call", "tool_use") or self.tool_name is not None or self.tool_call_id is not None
+        # A tool call is usually from the assistant and has a tool_name
+        return self.event_type in ("tool_call", "tool_use") or (self.role == "assistant" and self.tool_name is not None)
 
     @property
     def is_tool_output(self) -> bool:

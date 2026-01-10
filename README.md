@@ -1,53 +1,63 @@
-# agentlog
+<p align="center">
+  <img src="assets/agentlog-banner.svg" alt="agentlog" width="900" />
+</p>
 
-Unified Python API for reading agent session logs from:
-- Claude Code
-- Codex CLI
-- Gemini CLI
-- Cursor
+Unified Python API for reading and normalizing agent session logs from **Claude Code**, **Codex CLI**, **Gemini CLI**, and **Cursor**.
 
-## Features
+## Why
 
-- **Unified Model**: Consistent `SessionInfo` and `AgentEvent` models across all providers.
-- **Incremental Turn Counting**: Fast, cached turn counting for JSONL logs.
-- **Project Discovery**: Automatically derives project names by searching for `.git` roots.
-- **Lazy Discovery**: Providers are loaded only when needed.
+If you bounce between agent tools, your local history ends up scattered across JSONL files and SQLite databases. `agentlog` gives you:
 
-## Installation
+- **One schema**: `SessionInfo` + `AgentEvent` across all providers (raw JSON preserved).
+- **Fast turn counts**: incremental, cached turn counting for JSONL logs.
+- **Zero deps**: pure stdlib (Python `>=3.11`).
+- **Project-aware sessions**: derives a project name by walking up to a `.git` root.
+- **Lazy providers**: provider implementations load only when used.
+
+## Architecture
+
+![agentlog architecture](assets/agentlog-architecture.svg)
+
+## Install
 
 ```bash
+uv pip install agentlog
+# or
 pip install agentlog
 ```
 
-## Usage
+## Quickstart
 
 ```python
 from agentlog import SessionRegistry, EventParser
 
-# List all sessions across all providers
+# 1) Discover sessions
 registry = SessionRegistry()
 for session in registry.list_sessions():
-    print(f"{session.provider}: {session.session_id} ({session.turn_count} turns)")
+    print(session.provider, session.session_id, session.turn_count, session.project)
 
-# Parse events from a specific session
-parser = EventParser('claude')
+# 2) Stream normalized events
+session = next(registry.list_sessions(provider="codex"))
+parser = EventParser(session.provider, registry=registry)
 for event in parser.parse_session_file(session.file_path):
-    print(f"{event.role}: {event.content_text[:50]}")
+    if event.is_tool_call:
+        print("tool:", event.tool_name)
+    elif event.content_text:
+        print(event.role + ":", event.content_text[:60])
 ```
+
+## Event Stream
+
+![agentlog event stream](assets/agentlog-event-stream.svg)
 
 ## Providers
 
-### Claude Code
-Sessions stored in `~/.claude/projects/<slug>/*.jsonl`
-
-### Codex CLI  
-Sessions stored in `~/.codex/sessions/YYYY/MM/DD/*.jsonl`
-
-### Gemini CLI
-Sessions stored in `~/.gemini/tmp/<hash>/chats/session-*.json`
-
-### Cursor
-Sessions stored in SQLite database at `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`
+| Provider | Source | Format |
+|---|---|---|
+| Claude Code | `~/.claude/projects/<slug>/*.jsonl` | JSONL |
+| Codex CLI | `~/.codex/sessions/YYYY/MM/DD/*.jsonl` | JSONL |
+| Gemini CLI | `~/.gemini/tmp/<hash>/chats/session*.json` | JSON |
+| Cursor | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` | SQLite |
 
 ## License
 

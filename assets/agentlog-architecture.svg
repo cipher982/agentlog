@@ -1,0 +1,150 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" role="img" aria-label="agentlog architecture diagram">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0B1220" />
+      <stop offset="1" stop-color="#070A12" />
+    </linearGradient>
+
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#00D1FF" />
+      <stop offset="0.55" stop-color="#8B5CF6" />
+      <stop offset="1" stop-color="#22C55E" />
+    </linearGradient>
+
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0 0L12 6L0 12Z" fill="#8FB3FF" />
+    </marker>
+
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000000" flood-opacity="0.28" />
+    </filter>
+
+    <style>
+      .title { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+      .box { fill: #0F172A; stroke: #2A385A; stroke-width: 1.2; }
+      .box2 { fill: #0E1526; stroke: #2A385A; stroke-width: 1.2; }
+      .label { fill: #E6EDF3; font-weight: 750; font-size: 18px; }
+      .sub { fill: #9AA4B2; font-size: 13.5px; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1200" height="520" rx="22" fill="url(#bg)" />
+
+  <g opacity="0.18">
+    <path d="M60 74H1140" stroke="#1F2A44" stroke-width="1" />
+    <path d="M60 130H1140" stroke="#1F2A44" stroke-width="1" />
+    <path d="M60 186H1140" stroke="#1F2A44" stroke-width="1" />
+    <path d="M60 242H1140" stroke="#1F2A44" stroke-width="1" />
+    <path d="M60 298H1140" stroke="#1F2A44" stroke-width="1" />
+    <path d="M60 354H1140" stroke="#1F2A44" stroke-width="1" />
+    <path d="M60 410H1140" stroke="#1F2A44" stroke-width="1" />
+  </g>
+
+  <!-- Column headers -->
+  <text x="90" y="58" class="title" fill="#C7D0DA" font-size="14" font-weight="750" letter-spacing="0.6">SOURCES</text>
+  <text x="475" y="58" class="title" fill="#C7D0DA" font-size="14" font-weight="750" letter-spacing="0.6">PROVIDERS</text>
+  <text x="845" y="58" class="title" fill="#C7D0DA" font-size="14" font-weight="750" letter-spacing="0.6">UNIFIED API</text>
+
+  <!-- Sources -->
+  <g filter="url(#softShadow)">
+    <g transform="translate(70 86)">
+      <rect class="box" width="320" height="86" rx="14" />
+      <circle cx="26" cy="30" r="10" fill="#00D1FF" />
+      <text x="52" y="36" class="title label">Claude Code</text>
+      <text x="52" y="60" class="mono sub">~/.claude/projects/&lt;slug&gt;/*.jsonl</text>
+    </g>
+
+    <g transform="translate(70 184)">
+      <rect class="box" width="320" height="86" rx="14" />
+      <circle cx="26" cy="30" r="10" fill="#8B5CF6" />
+      <text x="52" y="36" class="title label">Codex CLI</text>
+      <text x="52" y="60" class="mono sub">~/.codex/sessions/YYYY/MM/DD/*.jsonl</text>
+    </g>
+
+    <g transform="translate(70 282)">
+      <rect class="box" width="320" height="86" rx="14" />
+      <circle cx="26" cy="30" r="10" fill="#F59E0B" />
+      <text x="52" y="36" class="title label">Gemini CLI</text>
+      <text x="52" y="60" class="mono sub">~/.gemini/tmp/&lt;hash&gt;/chats/session*.json</text>
+    </g>
+
+    <g transform="translate(70 380)">
+      <rect class="box" width="320" height="86" rx="14" />
+      <circle cx="26" cy="30" r="10" fill="#22C55E" />
+      <text x="52" y="36" class="title label">Cursor</text>
+      <text x="52" y="60" class="mono sub">~/Library/Application Support/.../state.vscdb</text>
+    </g>
+  </g>
+
+  <!-- Providers -->
+  <g filter="url(#softShadow)">
+    <g transform="translate(440 110)">
+      <rect class="box2" width="320" height="58" rx="14" />
+      <text x="22" y="38" class="mono" fill="#E6EDF3" font-size="16" font-weight="750">ClaudeProvider</text>
+      <text x="234" y="38" class="mono" fill="#9AA4B2" font-size="13">JSONLProvider</text>
+    </g>
+    <g transform="translate(440 180)">
+      <rect class="box2" width="320" height="58" rx="14" />
+      <text x="22" y="38" class="mono" fill="#E6EDF3" font-size="16" font-weight="750">CodexProvider</text>
+      <text x="234" y="38" class="mono" fill="#9AA4B2" font-size="13">JSONLProvider</text>
+    </g>
+    <g transform="translate(440 250)">
+      <rect class="box2" width="320" height="58" rx="14" />
+      <text x="22" y="38" class="mono" fill="#E6EDF3" font-size="16" font-weight="750">GeminiProvider</text>
+      <text x="232" y="38" class="mono" fill="#9AA4B2" font-size="13">SessionProvider</text>
+    </g>
+    <g transform="translate(440 320)">
+      <rect class="box2" width="320" height="58" rx="14" />
+      <text x="22" y="38" class="mono" fill="#E6EDF3" font-size="16" font-weight="750">CursorProvider</text>
+      <text x="232" y="38" class="mono" fill="#9AA4B2" font-size="13">SessionProvider</text>
+    </g>
+  </g>
+
+  <!-- Unified API -->
+  <g filter="url(#softShadow)">
+    <g transform="translate(820 128)">
+      <rect class="box" width="320" height="84" rx="16" />
+      <rect x="18" y="18" width="10" height="48" rx="5" fill="url(#accent)" />
+      <text x="40" y="44" class="mono" fill="#E6EDF3" font-size="18" font-weight="850">SessionRegistry</text>
+      <text x="40" y="66" class="sub title">discover + list sessions across providers</text>
+    </g>
+
+    <g transform="translate(820 228)">
+      <rect class="box" width="320" height="84" rx="16" />
+      <rect x="18" y="18" width="10" height="48" rx="5" fill="url(#accent)" />
+      <text x="40" y="44" class="mono" fill="#E6EDF3" font-size="18" font-weight="850">EventParser</text>
+      <text x="40" y="66" class="sub title">stream normalized events from a session</text>
+    </g>
+
+    <g transform="translate(820 330)">
+      <rect class="box2" width="320" height="116" rx="18" />
+      <text x="22" y="38" class="title" fill="#C7D0DA" font-size="14" font-weight="800" letter-spacing="0.6">MODELS</text>
+      <g transform="translate(22 52)">
+        <rect width="134" height="36" rx="18" fill="#111C33" stroke="#2A385A" stroke-width="1" />
+        <text x="18" y="24" class="mono" fill="#E6EDF3" font-size="14" font-weight="750">SessionInfo</text>
+      </g>
+      <g transform="translate(164 52)">
+        <rect width="134" height="36" rx="18" fill="#111C33" stroke="#2A385A" stroke-width="1" />
+        <text x="18" y="24" class="mono" fill="#E6EDF3" font-size="14" font-weight="750">AgentEvent</text>
+      </g>
+      <text x="22" y="112" class="sub title">typed dataclasses + raw JSON preserved</text>
+    </g>
+  </g>
+
+  <!-- Flow arrows -->
+  <g fill="none" stroke="#8FB3FF" stroke-width="2.2" opacity="0.95" marker-end="url(#arrow)">
+    <path d="M390 129H430" />
+    <path d="M390 227H430" />
+    <path d="M390 325H430" />
+    <path d="M390 423H430" />
+
+    <path d="M760 139H810" />
+    <path d="M760 209H810" />
+    <path d="M760 279H810" />
+    <path d="M760 349H810" />
+  </g>
+
+  <!-- Footer -->
+  <text x="1140" y="494" class="mono" fill="#6B7687" font-size="13" text-anchor="end">Reads local logs → normalizes → ready for search, metrics, exports</text>
+</svg>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from agentlog import EventParser
@@ -115,6 +116,20 @@ def test_event_parser_codex_function_call_parsing(tmp_path: Path) -> None:
     assert event.tool_name == "shell"
     assert event.tool_input_json == {"command": ["bash", "-lc", "ls -la"], "workdir": "/test"}
     assert event.session_id == "sid-fc"
+
+
+def test_event_parser_codex_reasoning_fallback_preserves_raw_timestamp() -> None:
+    raw = {
+        "timestamp": "2025-01-01T00:00:09.000Z",
+        "type": "response_item",
+        "payload": {"type": "reasoning", "summary": []},
+    }
+
+    event = EventParser("codex").parse_event(raw)
+
+    assert event.role == "system"
+    assert event.event_type == "response_item"
+    assert event.timestamp == datetime(2025, 1, 1, 0, 0, 9, tzinfo=UTC)
 
 
 def test_event_parser_codex_function_call_output_parsing(tmp_path: Path) -> None:

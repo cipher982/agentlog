@@ -1,8 +1,7 @@
 """Event parser for extracting events from session files."""
 
 from __future__ import annotations
-
-import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
@@ -11,6 +10,17 @@ from .models import AgentEvent, SessionInfo
 
 if TYPE_CHECKING:
     from typing import Iterator
+
+
+def _fallback_timestamp(raw_json: Mapping[str, Any]) -> datetime:
+    """Best-effort timestamp extraction for unsupported event shapes."""
+    ts_str = raw_json.get("timestamp")
+    if isinstance(ts_str, str) and ts_str:
+        try:
+            return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+    return datetime.now(UTC)
 
 
 class EventParser:
@@ -77,9 +87,8 @@ class EventParser:
             if event is not None:
                 return event
         
-        from datetime import datetime
         return AgentEvent(
-            timestamp=datetime.now(),
+            timestamp=_fallback_timestamp(raw_json),
             role="system",
             event_type=raw_json.get("type"),
             content_text=None,

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator, Mapping
 
@@ -318,7 +318,7 @@ class CursorProvider(SessionProvider):
             role = "system"
         
         # Extract timestamp
-        timestamp = datetime.now()
+        timestamp = datetime.now(UTC)
         ts_str = raw.get('timestamp')
         if isinstance(ts_str, str) and ts_str:
             try:

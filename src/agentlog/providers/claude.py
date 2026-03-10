@@ -14,8 +14,7 @@ Turn counting rules:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -176,9 +175,9 @@ class ClaudeProvider(JSONLProvider):
             try:
                 timestamp = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
             except ValueError:
-                timestamp = datetime.now()
+                timestamp = datetime.now(UTC)
         else:
-            timestamp = datetime.now()
+            timestamp = datetime.now(UTC)
 
         # Extract content
         content_text = None

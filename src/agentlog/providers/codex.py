@@ -15,7 +15,7 @@ Turn counting rules:
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
@@ -164,7 +164,7 @@ class CodexProvider(JSONLProvider):
         raw_type = raw.get("type")
 
         # Extract timestamp (used by all event types)
-        timestamp = datetime.now()
+        timestamp = datetime.now(UTC)
         ts_str = raw.get("timestamp")
         if isinstance(ts_str, str) and ts_str:
             try:

@@ -26,9 +26,9 @@ import hashlib
 import json
 import threading
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator, Mapping
+from typing import Any, Iterator, Mapping
 
 from ..providers.base import AgentEvent, SessionInfo, SessionProvider
 
@@ -223,7 +223,7 @@ class GeminiProvider(SessionProvider):
                         parts.append(text)
             content_text = "\n".join(parts) if parts else None
 
-        timestamp = datetime.now()
+        timestamp = datetime.now(UTC)
         ts_str = raw.get("timestamp")
         if isinstance(ts_str, str) and ts_str:
             try:
